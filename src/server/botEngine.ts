@@ -1,5 +1,6 @@
 import { Server } from "socket.io";
 import WebSocket from "ws";
+import { getDb } from "./firebaseAdmin.ts";
 
 const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 const HISTORY_SIZE = 5;
@@ -57,6 +58,33 @@ let pingInterval: any = null;
 let reqIdCounter = Math.floor(Date.now() / 1000);
 
 let ioServer: Server | null = null;
+
+async function saveSettings(settings: any) {
+  try {
+    const db = getDb();
+    if (!db) return;
+    await db.collection("bot_data").doc("settings").set({ ...settings, updatedAt: new Date() });
+  } catch (err) {
+    console.error('Error saving settings:', err);
+  }
+}
+
+async function saveState() {
+  try {
+    const db = getDb();
+    if (!db) return;
+    await db.collection("bot_data").doc("state").set({
+      isRunning,
+      globalCurrentStake,
+      sessionPnL,
+      cumulativeLoss,
+      lastLostSymbol: lastLostSymbol || null,
+      updatedAt: new Date()
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error saving state:', err);
+  }
+}
 
 function postMessage(event: any) {
   if (ioServer) {
@@ -519,6 +547,37 @@ function handleContractUpdate(contract: any) {
         postMessage({ type: 'LIMIT_REACHED', message: 'Stop Loss Hit!' });
       }
     }
+    
+    saveState();
+  }
+}
+
+export async function initBot() {
+  try {
+    const db = getDb();
+    if (!db) return;
+    
+    const settingsDoc = await db.collection("bot_data").doc("settings").get();
+    if (settingsDoc.exists) {
+      currentSettings = settingsDoc.data();
+    }
+    
+    const stateDoc = await db.collection("bot_data").doc("state").get();
+    if (stateDoc.exists) {
+      const state = stateDoc.data();
+      isRunning = state?.isRunning || false;
+      globalCurrentStake = state?.globalCurrentStake || 1;
+      sessionPnL = state?.sessionPnL || 0;
+      cumulativeLoss = state?.cumulativeLoss || 0;
+      lastLostSymbol = state?.lastLostSymbol || null;
+      
+      // Auto resume
+      if (isRunning && currentSettings) {
+        connect();
+      }
+    }
+  } catch (err) {
+    console.error('Error loading DB state:', err);
   }
 }
 
@@ -543,6 +602,8 @@ export function startBotEngine(io: Server) {
         const isNewToken = currentSettings?.apiToken !== data.settings?.apiToken;
         currentSettings = data.settings;
         
+        saveSettings(currentSettings);
+
         // Also broadcast settings to other clients
         socket.broadcast.emit('bot_sync', { currentSettings });
 
@@ -555,6 +616,7 @@ export function startBotEngine(io: Server) {
 
       if (data.type === 'START') {
         currentSettings = data.settings;
+        saveSettings(currentSettings);
         
         globalCurrentStake = currentSettings?.globalStake || 1;
         cumulativeLoss = 0;
@@ -568,6 +630,8 @@ export function startBotEngine(io: Server) {
         });
 
         isRunning = true;
+        saveState();
+
         connect();
         io.emit('bot_sync', { isRunning: true }); // Notify all
       }
@@ -579,6 +643,8 @@ export function startBotEngine(io: Server) {
         markets.forEach(m => { 
           marketStates[m].streak = 0;
         });
+        saveState();
+        
         io.emit('bot_sync', { isRunning: false }); // Notify all
       }
 

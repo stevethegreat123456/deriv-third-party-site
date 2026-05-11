@@ -4,9 +4,16 @@ import path from "path";
 import { Server } from "socket.io";
 import { createServer } from "http";
 import cors from "cors";
-import { startBotEngine } from "./src/server/botEngine.ts";
+import dotenv from "dotenv";
+import { startBotEngine, initBot } from "./src/server/botEngine.ts";
+import { initFirebaseAdmin } from "./src/server/firebaseAdmin.ts";
+
+dotenv.config();
 
 async function startServer() {
+  initFirebaseAdmin();
+  await initBot();
+  
   const app = express();
   const PORT = process.env.PORT || 3000;
   
