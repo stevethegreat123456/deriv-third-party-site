@@ -1,0 +1,6 @@
+{
+  "name": "Deriv HF Bot",
+  "description": "High-frequency trading bot for Deriv synthetic indices.",
+  "requestFramePermissions": ["screen-wake-lock"],
+  "majorCapabilities": []
+}
