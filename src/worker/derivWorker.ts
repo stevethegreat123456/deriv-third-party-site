@@ -19,7 +19,7 @@ export type WorkerMessage =
   | { type: 'ERROR', message: string };
 
 const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
-const HISTORY_SIZE = 5;
+const HISTORY_SIZE = 50;
 
 // Memory Management: Typed Arrays and Circular Buffers over dynamic Arrays
 interface MarketState {
@@ -53,6 +53,7 @@ markets.forEach(symbol => {
 let ws: WebSocket | null = null;
 let isRunning = false;
 let currentSettings: any = null;
+let currentBalance = 0;
 
 let globalCurrentStake = 1;
 let isTradeActive = false;
@@ -148,12 +149,16 @@ function connect() {
 
     if (data.msg_type === 'authorize') {
       postMessage({ type: 'STATUS', status: 'connected' });
+      if (data.authorize && data.authorize.balance) {
+        currentBalance = data.authorize.balance;
+      }
       ws?.send('{"balance":1,"subscribe":1}');
       subscribeToTicks();
       ws?.send('{"proposal_open_contract":1,"subscribe":1}');
     }
 
     if (data.msg_type === 'balance') {
+      currentBalance = data.balance.balance;
       postMessage({ type: 'BALANCE', balance: data.balance.balance });
     }
 
@@ -209,24 +214,10 @@ function handleTick(tickInfo: any) {
   const prevDigit = state.history[(state.historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
   const prevPrevDigit = state.history[(state.historyIndex - 2 + HISTORY_SIZE) % HISTORY_SIZE];
 
-  if (currentSettings && currentSettings.strategy === 'dual') {
-    if (digit === 4 || digit === 5) {
-      if ((prevDigit === 4 || prevDigit === 5) && (prevPrevDigit === 4 || prevPrevDigit === 5)) {
-        state.streak = 3;
-      } else if (prevDigit === 4 || prevDigit === 5) {
-        state.streak = 2;
-      } else {
-        state.streak = 1;
-      }
-    } else {
-      state.streak = 0;
-    }
+  if (digit === 0 || digit === 1) {
+    state.streak += 1;
   } else {
-    if (digit === 0 || digit === 1) {
-      state.streak += 1;
-    } else {
-      state.streak = 0;
-    }
+    state.streak = 0;
   }
 
   // Defeating GC: Circular buffer implementation (no Array.push or shift)
@@ -236,16 +227,18 @@ function handleTick(tickInfo: any) {
   queueUpdate(symbol, state);
 
   // Trigger evaluation
-  if (isRunning && currentSettings && state.streak === currentSettings.targetStreak) {
-    state.streak = 0; // reset
-    if (!isTradeActive) {
-      if (lastLostSymbol === symbol && globalCurrentStake > currentSettings.globalStake) {
-        // If we are in a recovery state (stake is multiplied) and this market is the one that just made us lose,
-        // ignore this setup completely.
-        return;
+  if (isRunning && currentSettings) {
+    if (state.streak === currentSettings.targetStreak) {
+      state.streak = 0; // reset
+      if (!isTradeActive) {
+        if (lastLostSymbol === symbol && globalCurrentStake > currentSettings.globalStake) {
+          // If we are in a recovery state (stake is multiplied) and this market is the one that just made us lose,
+          // ignore this setup completely.
+          return;
+        }
+        isTradeActive = true;
+        executeBuy(symbol);
       }
-      isTradeActive = true;
-      executeBuy(symbol);
     }
   }
 }
@@ -273,6 +266,7 @@ function queueUpdate(symbol: string, state: MarketState) {
     }, 250);
   }
 }
+
 
 function executeBuy(symbol: string) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -327,7 +321,7 @@ function executeBuy(symbol: string) {
 
     cumulativeLoss += Math.abs(pnl);
     
-    const safeYield = currentSettings?.strategy === 'dual' ? 0.41 : 0.21;
+    const safeYield = 0.21;
     const targetProfit = currentSettings.globalStake * safeYield;
     const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
     globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
@@ -405,7 +399,7 @@ function handleContractUpdate(contract: any) {
     
     // DIGITOVER 1 implies ~80% win rate and roughly 23.4% profit yield per winning trade. 
     // We use a safe yield of 21% (0.21) for conservative exact recovery + a bit of profit overage.
-    const safeYield = currentSettings?.strategy === 'dual' ? 0.41 : 0.21;
+    const safeYield = 0.21;
     // Aim to recover the full loss PLUS the profit we would have made from the base stake
     const targetProfit = currentSettings.globalStake * safeYield;
     
@@ -415,9 +409,6 @@ function handleContractUpdate(contract: any) {
 
     lastLostSymbol = symbol;
   }
-
-  // Release the global trade lock
-  isTradeActive = false;
 
   // Free memory to prevent V8 generic dictionary leak during high-frequency sessions
   delete pendingContracts[contract.contract_id];
@@ -429,12 +420,17 @@ function handleContractUpdate(contract: any) {
       isRunning = false;
       isTradeActive = false;
       postMessage({ type: 'LIMIT_REACHED', message: 'Take Profit Hit!' });
+      return;
     } else if (sessionPnL <= -currentSettings.stopLoss) {
       isRunning = false;
       isTradeActive = false;
       postMessage({ type: 'LIMIT_REACHED', message: 'Stop Loss Hit!' });
+      return;
     }
   }
+
+  // Release the global trade lock
+  isTradeActive = false;
 }
 
 self.onmessage = (e) => {

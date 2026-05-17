@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { getDb } from "./firebaseAdmin.ts";
 
 const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
-const HISTORY_SIZE = 5;
+const HISTORY_SIZE = 50;
 
 interface MarketState {
   symbol: string;
@@ -35,6 +35,7 @@ markets.forEach(symbol => {
 let ws: WebSocket | null = null;
 let isRunning = false;
 let currentSettings: any = null;
+let currentBalance = 0;
 
 let globalCurrentStake = 1;
 let isTradeActive = false;
@@ -175,12 +176,16 @@ function connect() {
 
     if (data.msg_type === 'authorize') {
       postMessage({ type: 'STATUS', status: 'connected' });
+      if (data.authorize && data.authorize.balance) {
+        currentBalance = data.authorize.balance;
+      }
       ws?.send('{"balance":1,"subscribe":1}');
       subscribeToTicks();
       ws?.send('{"proposal_open_contract":1,"subscribe":1}');
     }
 
     if (data.msg_type === 'balance') {
+      currentBalance = data.balance.balance;
       postMessage({ type: 'BALANCE', balance: data.balance.balance });
     }
 
@@ -233,24 +238,10 @@ function handleTick(tickInfo: any) {
   const prevDigit = state.history[(state.historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
   const prevPrevDigit = state.history[(state.historyIndex - 2 + HISTORY_SIZE) % HISTORY_SIZE];
 
-  if (currentSettings && currentSettings.strategy === 'dual') {
-    if (digit === 4 || digit === 5) {
-      if ((prevDigit === 4 || prevDigit === 5) && (prevPrevDigit === 4 || prevPrevDigit === 5)) {
-        state.streak = 3;
-      } else if (prevDigit === 4 || prevDigit === 5) {
-        state.streak = 2;
-      } else {
-        state.streak = 1;
-      }
-    } else {
-      state.streak = 0;
-    }
+  if (digit === 0 || digit === 1) {
+    state.streak += 1;
   } else {
-    if (digit === 0 || digit === 1) {
-      state.streak += 1;
-    } else {
-      state.streak = 0;
-    }
+    state.streak = 0;
   }
 
   state.history[state.historyIndex] = digit;
@@ -261,25 +252,14 @@ function handleTick(tickInfo: any) {
   if (isRunning && currentSettings) {
     const now = Date.now();
     if (!isTradeActive && (now - lastTradeAttemptTime > 1000)) {
-      if (currentSettings.strategy === 'dual') {
-        if (prevPrevDigit !== -1 && prevDigit !== -1) {
-          const combined = `${prevPrevDigit}${prevDigit}${digit}`;
-          if (['444', '445', '454', '455', '544', '545', '554', '555'].includes(combined)) {
-            isTradeActive = true;
-            lastTradeAttemptTime = now;
-            executeDualTrade(symbol);
-          }
+      if (state.streak === currentSettings.targetStreak) {
+        state.streak = 0;
+        if (lastLostSymbol === symbol && globalCurrentStake > currentSettings.globalStake) {
+          return;
         }
-      } else {
-        if (state.streak === currentSettings.targetStreak) {
-          state.streak = 0;
-          if (lastLostSymbol === symbol && globalCurrentStake > currentSettings.globalStake) {
-            return;
-          }
-          isTradeActive = true;
-          lastTradeAttemptTime = now;
-          executeBuy(symbol);
-        }
+        isTradeActive = true;
+        lastTradeAttemptTime = now;
+        executeBuy(symbol);
       }
     }
   }
@@ -305,6 +285,77 @@ function queueUpdate(symbol: string, state: MarketState) {
       batchTimeout = null;
     }, 250);
   }
+}
+
+function executeBuyDynamicDiffers(symbol: string, targetDigit: number) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!currentSettings || !currentSettings.apiToken) return;
+
+  const reqId = reqIdCounter++;
+  
+  const riskPercent = currentSettings.riskPercentage || 5;
+  // Risk EXACTLY the risk percentage of the current working bankroll
+  let stake = currentBalance * (riskPercent / 100);
+  stake = Math.max(0.35, Math.floor(stake * 100) / 100);
+  
+  // Track globally for UI fallback
+  globalCurrentStake = stake;
+
+  expectedCallbacks = 1;
+  batchPnL = 0;
+  batchSymbol = symbol;
+
+  reqIdToSymbol[reqId] = symbol;
+
+  const rawPayloadString = `{"buy":1,"price":${stake},"parameters":{"amount":${stake},"basis":"stake","contract_type":"DIGITDIFF","currency":"USD","duration":1,"duration_unit":"t","symbol":"${symbol}","barrier":"${targetDigit}"},"req_id":${reqId}}`;
+  
+  ws.send(rawPayloadString);
+
+  postMessage({
+    type: 'TRADE_INIT',
+    trade: {
+      id: reqId.toString(),
+      timestamp: Date.now(),
+      market: symbol,
+      contractId: 0,
+      buyPrice: stake,
+      result: 'pending',
+      pnl: 0,
+      entryDigit: targetDigit // Store the chosen cold digit for debugging
+    }
+  });
+
+  if (deadlockTimeoutId) {
+    clearTimeout(deadlockTimeoutId);
+    deadlockTimeoutId = null;
+  }
+
+  deadlockTimeoutId = setTimeout(() => {
+    if (!isTradeActive) return;
+    
+    // Deadlock triggered: no response for 10s. Treat as loss.
+    const customId = reqId.toString();
+    const pnl = -stake;
+    
+    postMessage({
+      type: 'TRADE_RESULT',
+      id: customId,
+      result: 'lost',
+      pnl: pnl,
+      entryTick: 'TIMEOUT',
+      exitTick: 'TIMEOUT'
+    });
+
+    isTradeActive = false;
+    sessionPnL += pnl;
+    
+    if (currentSettings && isRunning) {
+      if (sessionPnL <= -currentSettings.stopLoss) {
+        isRunning = false;
+        postMessage({ type: 'LIMIT_REACHED', message: 'Stop Loss Hit!' });
+      }
+    }
+  }, 10000);
 }
 
 function executeBuy(symbol: string) {
@@ -360,7 +411,7 @@ function executeBuy(symbol: string) {
 
     cumulativeLoss += Math.abs(pnl);
     
-    const safeYield = currentSettings?.strategy === 'dual' ? 0.41 : 0.21;
+    const safeYield = 0.21;
     const targetProfit = currentSettings.globalStake * safeYield;
     const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
     globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
@@ -375,86 +426,6 @@ function executeBuy(symbol: string) {
         postMessage({ type: 'LIMIT_REACHED', message: 'Stop Loss Hit!' });
       }
     }
-  }, 10000);
-}
-
-function executeDualTrade(symbol: string) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (!currentSettings || !currentSettings.apiToken) return;
-
-  const reqId1 = reqIdCounter++;
-  const reqId2 = reqIdCounter++;
-  const stake = globalCurrentStake;
-
-  expectedCallbacks = 2;
-  batchPnL = 0;
-  batchSymbol = symbol;
-
-  reqIdToSymbol[reqId1] = symbol;
-  reqIdToSymbol[reqId2] = symbol;
-
-  const payload1 = `{"buy":1,"price":${stake},"parameters":{"amount":${stake},"basis":"stake","contract_type":"DIGITUNDER","currency":"USD","duration":1,"duration_unit":"t","symbol":"${symbol}","barrier":"4"},"req_id":${reqId1}}`;
-  const payload2 = `{"buy":1,"price":${stake},"parameters":{"amount":${stake},"basis":"stake","contract_type":"DIGITOVER","currency":"USD","duration":1,"duration_unit":"t","symbol":"${symbol}","barrier":"5"},"req_id":${reqId2}}`;
-
-  ws.send(payload1);
-  ws.send(payload2);
-
-  postMessage({
-    type: 'TRADE_INIT',
-    trade: {
-      id: reqId1.toString(),
-      timestamp: Date.now(),
-      market: symbol,
-      contractId: 0,
-      buyPrice: stake,
-      result: 'pending',
-      pnl: 0,
-    }
-  });
-
-  postMessage({
-    type: 'TRADE_INIT',
-    trade: {
-      id: reqId2.toString(),
-      timestamp: Date.now(),
-      market: symbol,
-      contractId: 0,
-      buyPrice: stake,
-      result: 'pending',
-      pnl: 0,
-    }
-  });
-
-  if (deadlockTimeoutId) {
-    clearTimeout(deadlockTimeoutId);
-    deadlockTimeoutId = null;
-  }
-
-  deadlockTimeoutId = setTimeout(() => {
-    if (!isTradeActive) return;
-    
-    // Simplistic handling for timeout in a batch
-    // We just reset everything so it can continue
-    isTradeActive = false;
-    expectedCallbacks = 0;
-    batchPnL = 0;
-    
-    postMessage({
-      type: 'TRADE_RESULT',
-      id: reqId1.toString(),
-      result: 'lost',
-      pnl: 0,
-      entryTick: 'TIMEOUT',
-      exitTick: 'TIMEOUT'
-    });
-    postMessage({
-      type: 'TRADE_RESULT',
-      id: reqId2.toString(),
-      result: 'lost',
-      pnl: 0,
-      entryTick: 'TIMEOUT',
-      exitTick: 'TIMEOUT'
-    });
   }, 10000);
 }
 
@@ -523,7 +494,7 @@ function handleContractUpdate(contract: any) {
     } else {
       cumulativeLoss += Math.abs(batchPnL);
       
-      const safeYield = currentSettings?.strategy === 'dual' ? 0.41 : 0.21;
+      const safeYield = 0.21;
       const targetProfit = currentSettings.globalStake * safeYield;
       const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
       globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
@@ -532,6 +503,7 @@ function handleContractUpdate(contract: any) {
     }
 
     isTradeActive = false;
+    
     expectedCallbacks = 0;
     batchPnL = 0;
     batchSymbol = null;
@@ -541,10 +513,12 @@ function handleContractUpdate(contract: any) {
         isRunning = false;
         isTradeActive = false;
         postMessage({ type: 'LIMIT_REACHED', message: 'Take Profit Hit!' });
+        return;
       } else if (sessionPnL <= -currentSettings.stopLoss) {
         isRunning = false;
         isTradeActive = false;
         postMessage({ type: 'LIMIT_REACHED', message: 'Stop Loss Hit!' });
+        return;
       }
     }
     

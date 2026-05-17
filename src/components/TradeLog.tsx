@@ -79,7 +79,7 @@ export function TradeLog() {
                       <td className="py-2 px-3 border-b border-[#27272a]/50 text-center text-[#e4e4e7]">
                         {trade.entryDigit !== undefined && !Number.isNaN(trade.entryDigit) ? trade.entryDigit : '-'}
                       </td>
-                      <td className={`py-2 px-3 border-b border-[#27272a]/50 text-center font-bold ${trade.exitDigit === 0 || trade.exitDigit === 1 ? 'text-[#ff4b4b]' : 'text-[#00ff9c]'}`}>
+                      <td className={`py-2 px-3 border-b border-[#27272a]/50 text-center font-bold ${trade.result === 'lost' ? 'text-[#ff4b4b]' : trade.result === 'won' ? 'text-[#00ff9c]' : 'text-[#a1a1aa]'}`}>
                         {trade.exitDigit !== undefined && !Number.isNaN(trade.exitDigit) ? trade.exitDigit : '-'}
                       </td>
                       <td className="py-2 px-3 border-b border-[#27272a]/50 text-center">

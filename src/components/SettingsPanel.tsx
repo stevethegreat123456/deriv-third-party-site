@@ -14,7 +14,6 @@ export function SettingsPanel() {
       apiToken: fd.get('apiToken') as string,
       globalStake: Number(fd.get('globalStake')),
       targetStreak: Number(fd.get('targetStreak')),
-      strategy: fd.get('strategy') as 'streak' | 'dual',
       takeProfit: Number(fd.get('takeProfit')),
       stopLoss: Number(fd.get('stopLoss')),
       useSchedule: fd.get('useSchedule') === 'on',
@@ -51,18 +50,6 @@ export function SettingsPanel() {
                   className="w-full bg-black/30 border border-[#27272a] text-[#00ff9c] px-3 py-2 focus:border-[#00ff9c] outline-none rounded font-mono text-[12px]"
                   placeholder="Deriv API Token..."
                 />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase text-[#a1a1aa] font-semibold tracking-widest">Strategy</label>
-                <select 
-                  name="strategy"
-                  defaultValue={settings.strategy}
-                  className="w-full bg-black/30 border border-[#27272a] text-[#00ff9c] px-3 py-2 focus:border-[#00ff9c] outline-none rounded font-mono text-[12px]"
-                >
-                  <option value="streak">Streak (0/1 Over 1)</option>
-                  <option value="dual">Dual 3-Tick (4/5 Under/Over)</option>
-                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

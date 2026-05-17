@@ -37,7 +37,6 @@ export interface Settings {
   apiToken: string;
   globalStake: number;
   targetStreak: number;
-  strategy: 'streak' | 'dual';
   takeProfit: number;
   stopLoss: number;
   useSchedule: boolean;
@@ -83,7 +82,6 @@ export const useStore = create<AppState>()(
         apiToken: '',
         globalStake: 1,
         targetStreak: 3,
-        strategy: 'streak',
         takeProfit: 10,
         stopLoss: 20,
         useSchedule: false,
