@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import WebSocket from "ws";
-import { getDb } from "./firebaseAdmin.ts";
+import { getSupabase } from "./supabase.ts";
 
 const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 const HISTORY_SIZE = 50;
@@ -53,7 +53,7 @@ let batchSymbol: string | null = null;
 let pendingUpdates: Record<string, any> = {};
 let batchTimeout: any = null;
 
-let pendingContracts: Record<number, { customId: string, symbol: string }> = {}; 
+let pendingContracts: Record<number, { customId: string, symbol: string, stake: number, timestamp: number }> = {}; 
 let reqIdToSymbol: Record<number, string> = {};
 let pingInterval: any = null;
 let reqIdCounter = Math.floor(Date.now() / 1000);
@@ -62,9 +62,9 @@ let ioServer: Server | null = null;
 
 async function saveSettings(settings: any) {
   try {
-    const db = getDb();
-    if (!db) return;
-    await db.collection("bot_data").doc("settings").set({ ...settings, updatedAt: new Date() });
+    const supabase = getSupabase();
+    if (!supabase) return;
+    await supabase.from('bot_data').upsert({ id: 'settings', data: settings, updated_at: new Date().toISOString() });
   } catch (err) {
     console.error('Error saving settings:', err);
   }
@@ -72,16 +72,19 @@ async function saveSettings(settings: any) {
 
 async function saveState() {
   try {
-    const db = getDb();
-    if (!db) return;
-    await db.collection("bot_data").doc("state").set({
-      isRunning,
-      globalCurrentStake,
-      sessionPnL,
-      cumulativeLoss,
-      lastLostSymbol: lastLostSymbol || null,
-      updatedAt: new Date()
-    }, { merge: true });
+    const supabase = getSupabase();
+    if (!supabase) return;
+    await supabase.from('bot_data').upsert({
+      id: 'state',
+      data: {
+        isRunning,
+        globalCurrentStake,
+        sessionPnL,
+        cumulativeLoss,
+        lastLostSymbol: lastLostSymbol || null,
+      },
+      updated_at: new Date().toISOString()
+    });
   } catch (err) {
     console.error('Error saving state:', err);
   }
@@ -90,6 +93,35 @@ async function saveState() {
 function postMessage(event: any) {
   if (ioServer) {
     ioServer.emit('bot_event', event);
+  }
+  
+  if (event && event.type === 'TRADE_RESULT') {
+    saveTrade(event);
+  }
+}
+
+async function saveTrade(tradeEvent: any) {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return;
+    const { error } = await supabase.from('bot_trades').insert({
+      id: tradeEvent.id,
+      market: tradeEvent.market || 'UNKNOWN',
+      buy_price: tradeEvent.buyPrice || 0,
+      timestamp: tradeEvent.timestamp || Date.now(),
+      result: tradeEvent.result,
+      pnl: tradeEvent.pnl,
+      entry_tick: tradeEvent.entryTick,
+      exit_tick: tradeEvent.exitTick,
+      entry_digit: tradeEvent.entryDigit,
+      exit_digit: tradeEvent.exitDigit,
+      created_at: new Date().toISOString()
+    });
+    if (error) {
+      console.error('Supabase error saving trade:', error);
+    }
+  } catch (err) {
+    console.error('Error saving trade:', err);
   }
 }
 
@@ -340,6 +372,9 @@ function executeBuyDynamicDiffers(symbol: string, targetDigit: number) {
     postMessage({
       type: 'TRADE_RESULT',
       id: customId,
+      market: batchSymbol || 'UNKNOWN',
+      buyPrice: stake,
+      timestamp: Date.now(),
       result: 'lost',
       pnl: pnl,
       entryTick: 'TIMEOUT',
@@ -403,6 +438,9 @@ function executeBuy(symbol: string) {
     postMessage({
       type: 'TRADE_RESULT',
       id: customId,
+      market: symbol,
+      buyPrice: stake,
+      timestamp: Date.now(),
       result: 'lost',
       pnl: pnl,
       entryTick: 'TIMEOUT',
@@ -435,7 +473,12 @@ function handleBuy(buyInfo: any, echo_req: any) {
   if (reqId) {
     const symbol = reqIdToSymbol[reqId];
     if (symbol) {
-      pendingContracts[contractId] = { customId: reqId.toString(), symbol };
+      pendingContracts[contractId] = { 
+        customId: reqId.toString(), 
+        symbol,
+        stake: Number(buyInfo.buy_price) || globalCurrentStake,
+        timestamp: Number(buyInfo.start_time) * 1000 || Date.now()
+      };
       delete reqIdToSymbol[reqId];
     }
   }
@@ -459,6 +502,9 @@ function handleContractUpdate(contract: any) {
   postMessage({
     type: 'TRADE_RESULT',
     id: customId,
+    market: symbol,
+    buyPrice: contract.buy_price || globalCurrentStake,
+    timestamp: contract.date_start ? contract.date_start * 1000 : Date.now(),
     result: isWin ? 'won' : 'lost',
     pnl: pnl,
     entryTick: entryTickStr,
@@ -528,22 +574,22 @@ function handleContractUpdate(contract: any) {
 
 export async function initBot() {
   try {
-    const db = getDb();
-    if (!db) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
     
-    const settingsDoc = await db.collection("bot_data").doc("settings").get();
-    if (settingsDoc.exists) {
-      currentSettings = settingsDoc.data();
+    const { data: settingsRow } = await supabase.from('bot_data').select('data').eq('id', 'settings').single();
+    if (settingsRow && settingsRow.data) {
+      currentSettings = settingsRow.data;
     }
     
-    const stateDoc = await db.collection("bot_data").doc("state").get();
-    if (stateDoc.exists) {
-      const state = stateDoc.data();
-      isRunning = state?.isRunning || false;
-      globalCurrentStake = state?.globalCurrentStake || 1;
-      sessionPnL = state?.sessionPnL || 0;
-      cumulativeLoss = state?.cumulativeLoss || 0;
-      lastLostSymbol = state?.lastLostSymbol || null;
+    const { data: stateRow } = await supabase.from('bot_data').select('data').eq('id', 'state').single();
+    if (stateRow && stateRow.data) {
+      const stateData = stateRow.data;
+      isRunning = stateData?.isRunning || false;
+      globalCurrentStake = stateData?.globalCurrentStake || 1;
+      sessionPnL = stateData?.sessionPnL || 0;
+      cumulativeLoss = stateData?.cumulativeLoss || 0;
+      lastLostSymbol = stateData?.lastLostSymbol || null;
       
       // Auto resume
       if (isRunning && currentSettings) {
@@ -570,6 +616,29 @@ export function startBotEngine(io: Server) {
         isTradeActive,
         connectionStatus: isReady ? 'connected' : 'disconnected'
     });
+    
+    // Fetch past trades
+    const supabase = getSupabase();
+    if (supabase) {
+      supabase.from('bot_trades').select('*').order('created_at', { ascending: false }).limit(50).then(({ data }) => {
+        if (data && data.length > 0) {
+           const pastTrades = data.reverse().map(t => ({
+             type: 'TRADE_RESULT',
+             id: t.id,
+             market: t.market,
+             buyPrice: t.buy_price,
+             timestamp: t.timestamp,
+             result: t.result,
+             pnl: t.pnl,
+             entryTick: t.entry_tick,
+             exitTick: t.exit_tick,
+             entryDigit: t.entry_digit,
+             exitDigit: t.exit_digit
+           }));
+           socket.emit('past_trades', pastTrades);
+        }
+      });
+    }
 
     socket.on('worker_command', (data: any) => {
       if (data.type === 'UPDATE_SETTINGS') {

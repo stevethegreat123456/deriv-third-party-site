@@ -40,6 +40,25 @@ export function Dashboard() {
       }
     });
 
+    socketRef.current.on('past_trades', (pastTrades) => {
+      // Map these partial past trades into basic UI Trade objects
+      // We only have the finalized properties from DB, which is exactly why the user was missing them.
+      const mapped = pastTrades.map((t: any) => ({
+        id: t.id,
+        timestamp: t.timestamp || Date.now(), 
+        market: t.market || 'R_100', 
+        contractId: 0,
+        buyPrice: t.buyPrice || 0,
+        result: t.result,
+        pnl: t.pnl,
+        entryTick: t.entryTick,
+        exitTick: t.exitTick,
+        entryDigit: t.entryDigit,
+        exitDigit: t.exitDigit,
+      }));
+      useStore.getState().setTradeLog(mapped);
+    });
+
     socketRef.current.on('bot_event', (msg) => {
       if (msg.type === 'MARKET_UPDATES') {
         bulkUpdateMarkets(msg.updates);

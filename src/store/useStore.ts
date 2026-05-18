@@ -69,6 +69,7 @@ interface AppState {
   saveAndResetSession: () => void;
   deleteSession: (id: string) => void;
   bulkUpdateMarkets: (updates: Record<string, Partial<MarketData>>) => void;
+  setTradeLog: (trades: Trade[]) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -114,6 +115,7 @@ export const useStore = create<AppState>()(
           }
           return { markets: newMarkets };
         }),
+      setTradeLog: (trades) => set({ tradeLog: trades }),
       tradeLog: [],
       addTrade: (trade) =>
         set((state) => {

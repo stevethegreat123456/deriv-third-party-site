@@ -6,16 +6,16 @@ import { createServer } from "http";
 import cors from "cors";
 import dotenv from "dotenv";
 import { startBotEngine, initBot } from "./src/server/botEngine.ts";
-import { initFirebaseAdmin } from "./src/server/firebaseAdmin.ts";
+import { initSupabase } from "./src/server/supabase.ts";
 
 dotenv.config();
 
 async function startServer() {
-  initFirebaseAdmin();
+  initSupabase();
   await initBot();
   
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   
   app.use(cors());
   app.use(express.json());
