@@ -529,7 +529,11 @@ function handleContractUpdate(contract: any) {
 
   const pending = pendingContracts[contract.contract_id];
   if (!pending) {
-    if (contract.contract_type === 'DIGITOVER' || contract.contract_type === 'DIGITDIFF') {
+    // If it's a recent contract we probably just haven't received the buy response yet.
+    // Give it a max of 5 tries (1250ms) before giving up, to avoid infinite loops and memory leaks.
+    if (!contract.__retries) contract.__retries = 0;
+    if (contract.__retries < 5 && (contract.contract_type === 'DIGITOVER' || contract.contract_type === 'DIGITDIFF')) {
+      contract.__retries++;
       setTimeout(() => handleContractUpdate(contract), 250);
     }
     return;
@@ -682,7 +686,7 @@ export function startBotEngine(io: Server) {
            }));
            socket.emit('past_trades', pastTrades);
         }
-      });
+      }).catch(err => console.error('Error fetching past trades:', err));
     }
 
     socket.on('worker_command', (data: any) => {
@@ -715,7 +719,7 @@ export function startBotEngine(io: Server) {
                }));
                socket.emit('past_trades', pastTrades);
             }
-          });
+          }).catch(err => console.error('Error fetching past trades sync:', err));
         }
       }
 
