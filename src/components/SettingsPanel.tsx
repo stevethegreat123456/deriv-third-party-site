@@ -10,7 +10,7 @@ export function SettingsPanel() {
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    setSettings({
+    const newSettings = {
       apiToken: fd.get('apiToken') as string,
       globalStake: Number(fd.get('globalStake')),
       targetStreak: Number(fd.get('targetStreak')),
@@ -19,7 +19,9 @@ export function SettingsPanel() {
       useSchedule: fd.get('useSchedule') === 'on',
       startTime: (fd.get('startTime') as string) || '08:00',
       stopTime: (fd.get('stopTime') as string) || '17:00',
-    });
+    };
+    setSettings(newSettings);
+    window.dispatchEvent(new CustomEvent('bot_settings_changed', { detail: newSettings }));
     setIsOpen(false);
   };
 

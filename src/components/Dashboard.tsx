@@ -12,7 +12,11 @@ import { RefreshCw } from 'lucide-react';
 
 export function Dashboard() {
   useWakeLock();
+  
+  const isInitialized = useRef<boolean>(false);
+  const socketRef = useRef<Socket | null>(null);
 
+  const [isPending, setIsPending] = React.useState(false);
   const isRunning = useStore((state) => state.isRunning);
   const setIsRunning = useStore((state) => state.setIsRunning);
   const settings = useStore((state) => state.settings);
@@ -26,17 +30,29 @@ export function Dashboard() {
   const setConnectionStatus = useStore((state) => state.setConnectionStatus);
   const setBalance = useStore((state) => state.setBalance);
   
-  const socketRef = useRef<Socket | null>(null);
-
   useEffect(() => {
     socketRef.current = io();
 
+    socketRef.current.on('connect', () => {
+      socketRef.current?.emit('worker_command', { type: 'REQUEST_SYNC' });
+    });
+
     socketRef.current.on('bot_sync', (data) => {
-      if (data.isRunning !== undefined && data.isRunning !== useStore.getState().isRunning) {
-         useStore.getState().setIsRunning(data.isRunning);
+      if (data.isRunning !== undefined) {
+         setIsPending(false);
+         if (data.isRunning !== useStore.getState().isRunning) {
+            useStore.getState().setIsRunning(data.isRunning);
+         }
       }
       if (data.connectionStatus !== undefined) {
          useStore.getState().setConnectionStatus(data.connectionStatus);
+      }
+      if (data.currentSettings !== undefined && data.currentSettings !== null) {
+         const localSettings = useStore.getState().settings;
+         if (JSON.stringify(localSettings) !== JSON.stringify(data.currentSettings)) {
+            useStore.getState().setSettings(data.currentSettings);
+         }
+         isInitialized.current = true;
       }
     });
 
@@ -93,27 +109,21 @@ export function Dashboard() {
       }
     });
 
-    socketRef.current.emit('worker_command', { type: 'UPDATE_SETTINGS', settings: useStore.getState().settings });
-
     return () => {
       socketRef.current?.disconnect();
     };
   }, [bulkUpdateMarkets, addTrade, updateTrade, incrementDigit, setConnectionStatus, setBalance]);
 
   useEffect(() => {
-    if (!socketRef.current) return;
-    if (isRunning) {
-      if (!settings.apiToken) {
-        alert("API Token required for trading");
-        setIsRunning(false);
-        return;
-      }
-      socketRef.current.emit('worker_command', { type: 'START', settings, sessionPnL: useStore.getState().sessionPnL });
-    } else {
-      socketRef.current.emit('worker_command', { type: 'STOP' });
-      socketRef.current.emit('worker_command', { type: 'UPDATE_SETTINGS', settings });
-    }
-  }, [isRunning, settings, setIsRunning]);
+    const handleSettingsChange = (e: any) => {
+      socketRef.current?.emit('worker_command', { type: 'UPDATE_SETTINGS', settings: e.detail });
+    };
+    window.addEventListener('bot_settings_changed', handleSettingsChange);
+    
+    return () => {
+      window.removeEventListener('bot_settings_changed', handleSettingsChange);
+    };
+  }, []);
 
   const connectionStatus = useStore((state) => state.connectionStatus);
   const balance = useStore((state) => state.balance);
@@ -149,10 +159,25 @@ export function Dashboard() {
           <HistoryPanel />
           <SettingsPanel />
           <button 
-            onClick={() => setIsRunning(!isRunning)}
-            className={`px-3 py-1.5 sm:px-6 sm:py-2 rounded font-bold text-[10px] sm:text-sm transition-colors whitespace-nowrap ${isRunning ? 'bg-[#ff4b4b] text-[#e4e4e7]' : 'bg-[#00ff9c] text-[#09090b]'}`}
+            disabled={isPending}
+            onClick={() => {
+              if (isPending) return;
+              setIsPending(true);
+              const nextState = !isRunning;
+              if (nextState) {
+                  if (!settings.apiToken) {
+                      alert("API Token required for trading");
+                      setIsPending(false);
+                      return;
+                  }
+                  socketRef.current?.emit('worker_command', { type: 'START', settings, sessionPnL: useStore.getState().sessionPnL });
+              } else {
+                  socketRef.current?.emit('worker_command', { type: 'STOP' });
+              }
+            }}
+            className={`px-3 py-1.5 sm:px-6 sm:py-2 rounded font-bold text-[10px] sm:text-sm transition-colors whitespace-nowrap ${isPending ? 'opacity-50 cursor-not-allowed bg-gray-500 text-white' : isRunning ? 'bg-[#ff4b4b] text-[#e4e4e7]' : 'bg-[#00ff9c] text-[#09090b]'}`}
           >
-            {isRunning ? 'HALT' : 'START'}
+            {isPending ? '...' : isRunning ? 'HALT' : 'START'}
           </button>
         </div>
       </header>

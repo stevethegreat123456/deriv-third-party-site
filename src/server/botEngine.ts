@@ -70,8 +70,13 @@ async function saveSettings(settings: any) {
   }
 }
 
-async function saveState() {
+let lastStateSaveTime = 0;
+async function saveState(force = false) {
   try {
+    const now = Date.now();
+    if (!force && now - lastStateSaveTime < 2000) return;
+    lastStateSaveTime = now;
+    
     const supabase = getSupabase();
     if (!supabase) return;
     await supabase.from('bot_data').upsert({
@@ -187,6 +192,11 @@ function connect() {
     }
   });
 
+  ws.on('error', (err) => {
+    console.error('WebSocket Error:', err);
+    postMessage({ type: 'ERROR', message: `WS Error: ${err.message}` });
+  });
+
   ws.on('message', (messageBuffer) => {
     const data = JSON.parse(messageBuffer.toString());
 
@@ -197,6 +207,7 @@ function connect() {
          if (reqIdToSymbol[reqId]) {
            delete reqIdToSymbol[reqId];
            isTradeActive = false;
+           expectedCallbacks = 0;
            if (deadlockTimeoutId) {
              clearTimeout(deadlockTimeoutId);
              deadlockTimeoutId = null;
@@ -485,10 +496,44 @@ function handleBuy(buyInfo: any, echo_req: any) {
 }
 
 function handleContractUpdate(contract: any) {
-  if (!contract.is_expired && !contract.is_sold) return;
+  // Recover ghost contracts after a server restart 
+  // (We receive stream of all open contracts on subscribe)
+  if (!contract.is_expired && !contract.is_sold) {
+    if (!pendingContracts[contract.contract_id] && contract.contract_type === 'DIGITOVER') {
+      pendingContracts[contract.contract_id] = {
+        customId: contract.contract_id.toString(), // Use contract_id as fallback ID
+        symbol: contract.underlying,
+        stake: Number(contract.buy_price) || globalCurrentStake,
+        timestamp: Number(contract.date_start) * 1000 || Date.now()
+      };
+      
+      // If we find an open contract but thought we were idle, mark active
+      if (!isTradeActive) {
+         isTradeActive = true;
+         postMessage({
+            type: 'TRADE_INIT',
+            trade: {
+               id: contract.contract_id.toString(),
+               timestamp: Number(contract.date_start) * 1000 || Date.now(),
+               market: contract.underlying,
+               contractId: contract.contract_id,
+               buyPrice: Number(contract.buy_price),
+               result: 'pending',
+               pnl: 0
+            }
+         });
+      }
+    }
+    return;
+  }
 
   const pending = pendingContracts[contract.contract_id];
-  if (!pending) return;
+  if (!pending) {
+    if (contract.contract_type === 'DIGITOVER' || contract.contract_type === 'DIGITDIFF') {
+      setTimeout(() => handleContractUpdate(contract), 250);
+    }
+    return;
+  }
 
   const { customId, symbol } = pending;
   const pnl = Number(contract.profit) || 0;
@@ -641,6 +686,39 @@ export function startBotEngine(io: Server) {
     }
 
     socket.on('worker_command', (data: any) => {
+      if (data.type === 'REQUEST_SYNC') {
+        const isReady = ws && ws.readyState === WebSocket.OPEN;
+        socket.emit('bot_sync', {
+            isRunning,
+            currentSettings,
+            globalCurrentStake,
+            sessionPnL,
+            cumulativeLoss,
+            isTradeActive,
+            connectionStatus: isReady ? 'connected' : 'disconnected'
+        });
+        if (supabase) {
+          supabase.from('bot_trades').select('*').order('created_at', { ascending: false }).limit(50).then(({ data: tradeData }) => {
+            if (tradeData && tradeData.length > 0) {
+               const pastTrades = tradeData.reverse().map(t => ({
+                 type: 'TRADE_RESULT',
+                 id: t.id,
+                 market: t.market,
+                 buyPrice: t.buy_price,
+                 timestamp: t.timestamp,
+                 result: t.result,
+                 pnl: t.pnl,
+                 entryTick: t.entry_tick,
+                 exitTick: t.exit_tick,
+                 entryDigit: t.entry_digit,
+                 exitDigit: t.exit_digit
+               }));
+               socket.emit('past_trades', pastTrades);
+            }
+          });
+        }
+      }
+
       if (data.type === 'UPDATE_SETTINGS') {
         const isNewToken = currentSettings?.apiToken !== data.settings?.apiToken;
         currentSettings = data.settings;
@@ -673,7 +751,7 @@ export function startBotEngine(io: Server) {
         });
 
         isRunning = true;
-        saveState();
+        saveState(true);
 
         connect();
         io.emit('bot_sync', { isRunning: true }); // Notify all
@@ -686,7 +764,7 @@ export function startBotEngine(io: Server) {
         markets.forEach(m => { 
           marketStates[m].streak = 0;
         });
-        saveState();
+        saveState(true);
         
         io.emit('bot_sync', { isRunning: false }); // Notify all
       }
