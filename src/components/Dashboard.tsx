@@ -47,6 +47,12 @@ export function Dashboard() {
       if (data.connectionStatus !== undefined) {
          useStore.getState().setConnectionStatus(data.connectionStatus);
       }
+      if (data.lastLostSymbol !== undefined) {
+         useStore.getState().setLastLostSymbol(data.lastLostSymbol);
+      }
+      if (data.isWaitingForRecovery !== undefined) {
+         useStore.getState().setIsWaitingForRecovery(data.isWaitingForRecovery);
+      }
       if (data.currentSettings !== undefined && data.currentSettings !== null) {
          const localSettings = useStore.getState().settings;
          if (JSON.stringify(localSettings) !== JSON.stringify(data.currentSettings)) {
@@ -73,6 +79,10 @@ export function Dashboard() {
         exitDigit: t.exitDigit,
       }));
       useStore.getState().setTradeLog(mapped);
+    });
+
+    socketRef.current.on('all_time_stats', (stats) => {
+      useStore.getState().setAllTimeStats(stats);
     });
 
     socketRef.current.on('bot_event', (msg) => {

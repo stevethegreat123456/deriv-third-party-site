@@ -60,6 +60,11 @@ interface AppState {
   sessionPnL: number;
   wins: number;
   losses: number;
+  allTimePnL: number;
+  allTimeWins: number;
+  allTimeLosses: number;
+  allTimeTotalTrades: number;
+  setAllTimeStats: (stats: { totalPnL: number, wins: number, losses: number, totalTrades: number }) => void;
   maxConsecutiveLosses: number;
   currentConsecutiveLosses: number;
   digitDistribution: number[];
@@ -69,6 +74,10 @@ interface AppState {
   deleteSession: (id: string) => void;
   bulkUpdateMarkets: (updates: Record<string, Partial<MarketData>>) => void;
   setTradeLog: (trades: Trade[]) => void;
+  lastLostSymbol: string | null;
+  setLastLostSymbol: (symbol: string | null) => void;
+  isWaitingForRecovery: boolean;
+  setIsWaitingForRecovery: (isWaiting: boolean) => void;
 }
 
 export const useStore = create<AppState>()((set) => ({
@@ -154,15 +163,24 @@ export const useStore = create<AppState>()((set) => ({
     let newLosses = state.losses;
     let newMaxConsecutiveLosses = state.maxConsecutiveLosses;
     let newCurrentConsecutiveLosses = state.currentConsecutiveLosses;
+
+    let newAllTimePnL = state.allTimePnL;
+    let newAllTimeWins = state.allTimeWins;
+    let newAllTimeLosses = state.allTimeLosses;
+    let newAllTimeTotalTrades = state.allTimeTotalTrades;
     
     if (oldTrade.result === 'pending' && newTrade.result !== 'pending') {
         newPnL += newTrade.pnl;
+        newAllTimePnL += newTrade.pnl;
+        newAllTimeTotalTrades++;
         if (newTrade.result === 'won') {
             newWins++;
+            newAllTimeWins++;
             newCurrentConsecutiveLosses = 0;
         }
         if (newTrade.result === 'lost') {
             newLosses++;
+            newAllTimeLosses++;
             newCurrentConsecutiveLosses++;
             if (newCurrentConsecutiveLosses > newMaxConsecutiveLosses) {
                 newMaxConsecutiveLosses = newCurrentConsecutiveLosses;
@@ -176,12 +194,26 @@ export const useStore = create<AppState>()((set) => ({
         wins: newWins,
         losses: newLosses,
         maxConsecutiveLosses: newMaxConsecutiveLosses,
-        currentConsecutiveLosses: newCurrentConsecutiveLosses
+        currentConsecutiveLosses: newCurrentConsecutiveLosses,
+        allTimePnL: newAllTimePnL,
+        allTimeWins: newAllTimeWins,
+        allTimeLosses: newAllTimeLosses,
+        allTimeTotalTrades: newAllTimeTotalTrades
     };
   }),
   sessionPnL: 0,
   wins: 0,
   losses: 0,
+  allTimePnL: 0,
+  allTimeWins: 0,
+  allTimeLosses: 0,
+  allTimeTotalTrades: 0,
+  setAllTimeStats: (stats) => set({
+    allTimePnL: stats.totalPnL,
+    allTimeWins: stats.wins,
+    allTimeLosses: stats.losses,
+    allTimeTotalTrades: stats.totalTrades
+  }),
   maxConsecutiveLosses: 0,
   currentConsecutiveLosses: 0,
   digitDistribution: Array(10).fill(0),
@@ -217,5 +249,9 @@ export const useStore = create<AppState>()((set) => ({
       digitDistribution: Array(10).fill(0) 
     };
   }),
-  deleteSession: (id) => set((state) => ({ pastSessions: state.pastSessions.filter(s => s.id !== id) }))
+  deleteSession: (id) => set((state) => ({ pastSessions: state.pastSessions.filter(s => s.id !== id) })),
+  lastLostSymbol: null,
+  setLastLostSymbol: (symbol) => set({ lastLostSymbol: symbol }),
+  isWaitingForRecovery: false,
+  setIsWaitingForRecovery: (isWaiting) => set({ isWaitingForRecovery: isWaiting })
 }));

@@ -198,7 +198,13 @@ function connect() {
   });
 
   ws.on('message', (messageBuffer) => {
-    const data = JSON.parse(messageBuffer.toString());
+    let data;
+    try {
+      data = JSON.parse(messageBuffer.toString());
+    } catch (e) {
+      console.error('Invalid JSON from WS:', e);
+      return;
+    }
 
     if (data.error) {
       postMessage({ type: 'ERROR', message: data.error.message });
@@ -616,9 +622,23 @@ function handleContractUpdate(contract: any) {
         return;
       }
     }
-    
-    saveState();
   }
+    
+  if (ioServer) {
+    const isReady = ws && ws.readyState === 1; // WebSocket.OPEN is 1
+    ioServer.emit('bot_sync', {
+        isRunning,
+        currentSettings,
+        globalCurrentStake,
+        sessionPnL,
+        cumulativeLoss,
+        lastLostSymbol,
+        isWaitingForRecovery: stopScheduledAndWaitingForRecovery,
+        isTradeActive,
+        connectionStatus: isReady ? 'connected' : 'disconnected'
+    });
+  }
+  saveState();
 }
 
 export async function initBot() {
@@ -662,6 +682,8 @@ export function startBotEngine(io: Server) {
         globalCurrentStake,
         sessionPnL,
         cumulativeLoss,
+        lastLostSymbol,
+        isWaitingForRecovery: stopScheduledAndWaitingForRecovery,
         isTradeActive,
         connectionStatus: isReady ? 'connected' : 'disconnected'
     });
@@ -686,7 +708,7 @@ export function startBotEngine(io: Server) {
            }));
            socket.emit('past_trades', pastTrades);
         }
-      }).catch(err => console.error('Error fetching past trades:', err));
+      }).then(undefined, err => console.error('Error fetching past trades:', err));
     }
 
     socket.on('worker_command', (data: any) => {
@@ -698,6 +720,8 @@ export function startBotEngine(io: Server) {
             globalCurrentStake,
             sessionPnL,
             cumulativeLoss,
+            lastLostSymbol,
+            isWaitingForRecovery: stopScheduledAndWaitingForRecovery,
             isTradeActive,
             connectionStatus: isReady ? 'connected' : 'disconnected'
         });
@@ -719,7 +743,23 @@ export function startBotEngine(io: Server) {
                }));
                socket.emit('past_trades', pastTrades);
             }
-          }).catch(err => console.error('Error fetching past trades sync:', err));
+          }).then(undefined, err => console.error('Error fetching past trades sync:', err));
+
+          supabase.from('bot_trades').select('result, pnl').then(({ data: allTrades }) => {
+            if (allTrades) {
+              let totalPnL = 0;
+              let wins = 0;
+              let losses = 0;
+              let totalTrades = 0;
+              for (const t of allTrades) {
+                 totalTrades++;
+                 totalPnL += (t.pnl || 0);
+                 if (t.result === 'win') wins++;
+                 else if (t.result === 'loss') losses++;
+              }
+              socket.emit('all_time_stats', { totalPnL, wins, losses, totalTrades });
+            }
+          }).then(undefined, (err: any) => console.error('Error fetching all time stats:', err));
         }
       }
 
