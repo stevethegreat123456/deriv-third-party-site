@@ -424,7 +424,9 @@ function executeBuy(symbol: string) {
   
   reqIdToSymbol[reqId] = symbol;
 
-  const rawPayloadString = `${state.precompiledPrefix}${stake},"parameters":{"amount":${stake}${state.precompiledSuffix}${reqId}}`;
+  const barrier = (cumulativeLoss > 0 && currentSettings.recoveryMode === 'over_4') ? '4' : '1';
+
+  const rawPayloadString = `{"buy":1,"price":${stake},"parameters":{"amount":${stake},"basis":"stake","contract_type":"DIGITOVER","currency":"USD","duration":1,"duration_unit":"t","symbol":"${symbol}","barrier":"${barrier}"},"req_id":${reqId}}`;
   
   ws.send(rawPayloadString);
 
@@ -466,10 +468,15 @@ function executeBuy(symbol: string) {
 
     cumulativeLoss += Math.abs(pnl);
     
-    const safeYield = 0.21;
-    const targetProfit = currentSettings.globalStake * safeYield;
-    const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
-    globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
+    if (currentSettings.recoveryMode === 'over_4') {
+      const multiplier = currentSettings.martingaleMultiplier || 2.5;
+      globalCurrentStake = Math.ceil(globalCurrentStake * multiplier * 100) / 100;
+    } else {
+      const safeYield = 0.21;
+      const targetProfit = currentSettings.globalStake * safeYield;
+      const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
+      globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
+    }
 
     lastLostSymbol = symbol;
     isTradeActive = false;
@@ -502,34 +509,8 @@ function handleBuy(buyInfo: any, echo_req: any) {
 }
 
 function handleContractUpdate(contract: any) {
-  // Recover ghost contracts after a server restart 
-  // (We receive stream of all open contracts on subscribe)
+  // Ignore any open contracts in the general stream that we haven't resolved yet
   if (!contract.is_expired && !contract.is_sold) {
-    if (!pendingContracts[contract.contract_id] && contract.contract_type === 'DIGITOVER') {
-      pendingContracts[contract.contract_id] = {
-        customId: contract.contract_id.toString(), // Use contract_id as fallback ID
-        symbol: contract.underlying,
-        stake: Number(contract.buy_price) || globalCurrentStake,
-        timestamp: Number(contract.date_start) * 1000 || Date.now()
-      };
-      
-      // If we find an open contract but thought we were idle, mark active
-      if (!isTradeActive) {
-         isTradeActive = true;
-         postMessage({
-            type: 'TRADE_INIT',
-            trade: {
-               id: contract.contract_id.toString(),
-               timestamp: Number(contract.date_start) * 1000 || Date.now(),
-               market: contract.underlying,
-               contractId: contract.contract_id,
-               buyPrice: Number(contract.buy_price),
-               result: 'pending',
-               pnl: 0
-            }
-         });
-      }
-    }
     return;
   }
 
@@ -595,10 +576,15 @@ function handleContractUpdate(contract: any) {
     } else {
       cumulativeLoss += Math.abs(batchPnL);
       
-      const safeYield = 0.21;
-      const targetProfit = currentSettings.globalStake * safeYield;
-      const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
-      globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
+      if (currentSettings.recoveryMode === 'over_4') {
+        const multiplier = currentSettings.martingaleMultiplier || 2.5;
+        globalCurrentStake = Math.ceil(globalCurrentStake * multiplier * 100) / 100;
+      } else {
+        const safeYield = 0.21;
+        const targetProfit = currentSettings.globalStake * safeYield;
+        const preciseRecoveryStake = (cumulativeLoss + targetProfit) / safeYield;
+        globalCurrentStake = Math.ceil(preciseRecoveryStake * 100) / 100;
+      }
 
       lastLostSymbol = symbol;
     }

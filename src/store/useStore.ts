@@ -41,6 +41,8 @@ export interface Settings {
   useSchedule: boolean;
   startTime: string;
   stopTime: string;
+  recoveryMode?: 'over_1' | 'over_4';
+  martingaleMultiplier?: number;
 }
 
 interface AppState {
@@ -93,7 +95,9 @@ export const useStore = create<AppState>()((set) => ({
     stopLoss: 20,
     useSchedule: false,
     startTime: '08:00',
-    stopTime: '17:00'
+    stopTime: '17:00',
+    recoveryMode: 'over_1',
+    martingaleMultiplier: 2.5
   },
   setSettings: (newSettings) =>
     set((state) => ({ settings: { ...state.settings, ...newSettings } })),

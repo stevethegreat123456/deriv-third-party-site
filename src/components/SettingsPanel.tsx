@@ -19,6 +19,8 @@ export function SettingsPanel() {
       useSchedule: fd.get('useSchedule') === 'on',
       startTime: (fd.get('startTime') as string) || '08:00',
       stopTime: (fd.get('stopTime') as string) || '17:00',
+      recoveryMode: (fd.get('recoveryMode') as 'over_1' | 'over_4') || 'over_1',
+      martingaleMultiplier: Number(fd.get('martingaleMultiplier')) || 2.5,
     };
     setSettings(newSettings);
     window.dispatchEvent(new CustomEvent('bot_settings_changed', { detail: newSettings }));
@@ -126,6 +128,32 @@ export function SettingsPanel() {
                       type="time" 
                       name="stopTime"
                       defaultValue={settings.stopTime}
+                      className="w-full bg-black/30 border border-[#27272a] text-[#a1a1aa] px-3 py-2 outline-none font-mono text-[12px] rounded focus:border-[#00ff9c]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-[#27272a] space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase text-[#a1a1aa] font-semibold tracking-widest">Recovery Mode</label>
+                    <select 
+                      name="recoveryMode"
+                      defaultValue={settings.recoveryMode || 'over_1'}
+                      className="w-full bg-black/30 border border-[#27272a] text-[#a1a1aa] px-3 py-2 outline-none font-mono text-[12px] rounded focus:border-[#00ff9c]"
+                    >
+                      <option value="over_1">Precise (Over 1)</option>
+                      <option value="over_4">Martingale (Over 4)</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase text-[#a1a1aa] font-semibold tracking-widest">Martingale Multiplier</label>
+                    <input 
+                      type="number" 
+                      name="martingaleMultiplier"
+                      defaultValue={settings.martingaleMultiplier || 2.5}
+                      step="0.1"
                       className="w-full bg-black/30 border border-[#27272a] text-[#a1a1aa] px-3 py-2 outline-none font-mono text-[12px] rounded focus:border-[#00ff9c]"
                     />
                   </div>
