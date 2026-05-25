@@ -6,61 +6,28 @@ export function StatsPanel() {
   const sessionWins = useStore(state => state.wins);
   const sessionLosses = useStore(state => state.losses);
   
-  const [allTimeStats, setAllTimeStats] = useState({
-    pnl: 0,
-    wins: 0,
-    losses: 0,
-    totalTrades: 0,
-    winRate: 0,
-    maxConsecutiveLosses: 0,
-    currentConsecutiveLosses: 0,
-    loaded: false
-  });
-
+  const allTimePnL = useStore(state => state.allTimePnL);
+  const allTimeWins = useStore(state => state.allTimeWins);
+  const allTimeLosses = useStore(state => state.allTimeLosses);
+  const allTimeTotalTrades = useStore(state => state.allTimeTotalTrades);
+  
+  const allTimeMaxConsecutiveLosses = useStore(state => state.allTimeMaxConsecutiveLosses);
+  const allTimeCurrentConsecutiveLosses = useStore(state => state.allTimeCurrentConsecutiveLosses);
+  
   const sessionMaxConsecutiveLosses = useStore(state => state.maxConsecutiveLosses);
   const sessionCurrentConsecutiveLosses = useStore(state => state.currentConsecutiveLosses);
   const saveAndResetSession = useStore(state => state.saveAndResetSession);
   const takeProfit = useStore(state => state.settings.takeProfit);
   const stopLoss = useStore(state => state.settings.stopLoss);
 
-  // Re-fetch all time stats periodically or on new trades
-  useEffect(() => {
-    const fetchStats = () => {
-      fetch('/api/stats/all-time')
-        .then(res => res.json())
-        .then(data => {
-          if (!data.error) {
-            setAllTimeStats({
-              pnl: data.pnl,
-              wins: data.wins,
-              losses: data.losses,
-              totalTrades: data.totalTrades,
-              winRate: data.winRate,
-              maxConsecutiveLosses: data.maxConsecutiveLosses,
-              currentConsecutiveLosses: data.currentConsecutiveLosses,
-              loaded: true
-            });
-          }
-        })
-        .catch(console.error);
-    };
+  const displayPnL = allTimePnL;
+  const displayWins = allTimeWins;
+  const displayLosses = allTimeLosses;
+  const displayTotalTrades = allTimeTotalTrades;
+  const displayWinRate = displayTotalTrades === 0 ? 0 : (displayWins / displayTotalTrades) * 100;
 
-    fetchStats();
-    // Re-fetch every 10 seconds to keep it updated as the bot trades
-    const intervalId = setInterval(fetchStats, 10000);
-    return () => clearInterval(intervalId);
-  }, []);
-
-  const displayPnL = allTimeStats.loaded ? allTimeStats.pnl : sessionPnL;
-  const displayWins = allTimeStats.loaded ? allTimeStats.wins : sessionWins;
-  const displayLosses = allTimeStats.loaded ? allTimeStats.losses : sessionLosses;
-  const displayTotalTrades = allTimeStats.loaded ? allTimeStats.totalTrades : (sessionWins + sessionLosses);
-  const displayWinRate = allTimeStats.loaded 
-    ? allTimeStats.winRate 
-    : (displayTotalTrades === 0 ? 0 : (sessionWins / displayTotalTrades) * 100);
-
-  const displayMaxConsecutiveLosses = allTimeStats.loaded ? allTimeStats.maxConsecutiveLosses : sessionMaxConsecutiveLosses;
-  const displayCurrentConsecutiveLosses = allTimeStats.loaded ? allTimeStats.currentConsecutiveLosses : sessionCurrentConsecutiveLosses;
+  const displayMaxConsecutiveLosses = allTimeMaxConsecutiveLosses;
+  const displayCurrentConsecutiveLosses = allTimeCurrentConsecutiveLosses;
 
   return (
     <div className="flex flex-col gap-5 h-full">

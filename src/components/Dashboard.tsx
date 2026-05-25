@@ -122,7 +122,7 @@ export function Dashboard() {
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [bulkUpdateMarkets, addTrade, updateTrade, incrementDigit, setConnectionStatus, setBalance]);
+  }, []);
 
   useEffect(() => {
     const handleSettingsChange = (e: any) => {

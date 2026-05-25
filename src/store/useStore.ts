@@ -66,7 +66,9 @@ interface AppState {
   allTimeWins: number;
   allTimeLosses: number;
   allTimeTotalTrades: number;
-  setAllTimeStats: (stats: { totalPnL: number, wins: number, losses: number, totalTrades: number }) => void;
+  allTimeMaxConsecutiveLosses: number;
+  allTimeCurrentConsecutiveLosses: number;
+  setAllTimeStats: (stats: { totalPnL: number, wins: number, losses: number, totalTrades: number, maxConsecutiveLosses?: number, currentConsecutiveLosses?: number }) => void;
   maxConsecutiveLosses: number;
   currentConsecutiveLosses: number;
   digitDistribution: number[];
@@ -172,6 +174,8 @@ export const useStore = create<AppState>()((set) => ({
     let newAllTimeWins = state.allTimeWins;
     let newAllTimeLosses = state.allTimeLosses;
     let newAllTimeTotalTrades = state.allTimeTotalTrades;
+    let newAllTimeMaxConsecutiveLosses = state.allTimeMaxConsecutiveLosses;
+    let newAllTimeCurrentConsecutiveLosses = state.allTimeCurrentConsecutiveLosses;
     
     if (oldTrade.result === 'pending' && newTrade.result !== 'pending') {
         newPnL += newTrade.pnl;
@@ -181,13 +185,18 @@ export const useStore = create<AppState>()((set) => ({
             newWins++;
             newAllTimeWins++;
             newCurrentConsecutiveLosses = 0;
+            newAllTimeCurrentConsecutiveLosses = 0;
         }
         if (newTrade.result === 'lost') {
             newLosses++;
             newAllTimeLosses++;
             newCurrentConsecutiveLosses++;
+            newAllTimeCurrentConsecutiveLosses++;
             if (newCurrentConsecutiveLosses > newMaxConsecutiveLosses) {
                 newMaxConsecutiveLosses = newCurrentConsecutiveLosses;
+            }
+            if (newAllTimeCurrentConsecutiveLosses > newAllTimeMaxConsecutiveLosses) {
+                newAllTimeMaxConsecutiveLosses = newAllTimeCurrentConsecutiveLosses;
             }
         }
     }
@@ -202,7 +211,9 @@ export const useStore = create<AppState>()((set) => ({
         allTimePnL: newAllTimePnL,
         allTimeWins: newAllTimeWins,
         allTimeLosses: newAllTimeLosses,
-        allTimeTotalTrades: newAllTimeTotalTrades
+        allTimeTotalTrades: newAllTimeTotalTrades,
+        allTimeMaxConsecutiveLosses: newAllTimeMaxConsecutiveLosses,
+        allTimeCurrentConsecutiveLosses: newAllTimeCurrentConsecutiveLosses
     };
   }),
   sessionPnL: 0,
@@ -212,11 +223,18 @@ export const useStore = create<AppState>()((set) => ({
   allTimeWins: 0,
   allTimeLosses: 0,
   allTimeTotalTrades: 0,
-  setAllTimeStats: (stats) => set({
-    allTimePnL: stats.totalPnL,
-    allTimeWins: stats.wins,
-    allTimeLosses: stats.losses,
-    allTimeTotalTrades: stats.totalTrades
+  allTimeMaxConsecutiveLosses: 0,
+  allTimeCurrentConsecutiveLosses: 0,
+  setAllTimeStats: (stats) => set(state => {
+    // Determine the greater between session loaded and the database one
+    return {
+      allTimePnL: stats.totalPnL,
+      allTimeWins: stats.wins,
+      allTimeLosses: stats.losses,
+      allTimeTotalTrades: stats.totalTrades,
+      allTimeMaxConsecutiveLosses: stats.maxConsecutiveLosses || state.maxConsecutiveLosses,
+      allTimeCurrentConsecutiveLosses: stats.currentConsecutiveLosses || state.currentConsecutiveLosses
+    };
   }),
   maxConsecutiveLosses: 0,
   currentConsecutiveLosses: 0,

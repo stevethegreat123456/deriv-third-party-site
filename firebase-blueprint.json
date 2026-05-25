@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "BotData": {
+      "title": "BotData",
+      "description": "Stores current state and settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "data": { "type": "object" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "data", "updated_at"]
+    },
+    "BotTrade": {
+      "title": "BotTrade",
+      "description": "Stores historical trades",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "market": { "type": "string" },
+        "contractId": { "type": "number" },
+        "buyPrice": { "type": "number" },
+        "result": { "type": "string" },
+        "pnl": { "type": "number" }
+      },
+      "required": ["timestamp", "market", "contractId", "buyPrice", "result", "pnl"]
+    }
+  },
+  "firestore": {
+    "bot_data/{dataId}": {
+      "schema": "BotData",
+      "description": "Settings and State"
+    },
+    "bot_trades/{tradeId}": {
+      "schema": "BotTrade",
+      "description": "Historical trades"
+    }
+  }
+}

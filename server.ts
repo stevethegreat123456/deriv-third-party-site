@@ -6,12 +6,13 @@ import { createServer } from "http";
 import cors from "cors";
 import dotenv from "dotenv";
 import { startBotEngine, initBot } from "./src/server/botEngine.ts";
-import { initSupabase, getSupabase } from "./src/server/supabase.ts";
+import { db, waitForAuth } from "./src/server/firebase.ts";
+import { collection, query, orderBy, getDocs } from "firebase/firestore";
 
 dotenv.config();
 
 async function startServer() {
-  initSupabase();
+  await waitForAuth();
   await initBot();
   
   const app = express();
@@ -32,13 +33,15 @@ async function startServer() {
 
   app.get("/api/stats/all-time", async (req, res) => {
     try {
-      const supabase = getSupabase();
-      if (!supabase) {
-        return res.json({ wins: 0, losses: 0, pnl: 0, totalTrades: 0, winRate: 0 });
+      if (!db) {
+        return res.json({ wins: 0, losses: 0, pnl: 0, totalTrades: 0, winRate: 0, maxConsecutiveLosses: 0, currentConsecutiveLosses: 0 });
       }
 
-      const { data, error } = await supabase.from('bot_trades').select('result, pnl, timestamp').order('timestamp', { ascending: true });
-      if (error || !data) {
+      const allQ = query(collection(db, 'bot_trades'), orderBy('timestamp', 'asc'));
+      const querySnapshot = await getDocs(allQ);
+      const data = querySnapshot.docs.map(d => d.data());
+      
+      if (!data) {
         return res.json({ wins: 0, losses: 0, pnl: 0, totalTrades: 0, winRate: 0, maxConsecutiveLosses: 0, currentConsecutiveLosses: 0 });
       }
 

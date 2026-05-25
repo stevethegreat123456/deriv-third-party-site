@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import WebSocket from "ws";
-import { getSupabase } from "./supabase.ts";
+import { db } from "./firebase.ts";
+import { doc, setDoc, getDoc, collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 
 const WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 const HISTORY_SIZE = 50;
@@ -62,9 +63,8 @@ let ioServer: Server | null = null;
 
 async function saveSettings(settings: any) {
   try {
-    const supabase = getSupabase();
-    if (!supabase) return;
-    await supabase.from('bot_data').upsert({ id: 'settings', data: settings, updated_at: new Date().toISOString() });
+    if (!db) return;
+    await setDoc(doc(db, 'bot_data', 'settings'), { id: 'settings', data: settings, updated_at: new Date().toISOString() }, { merge: true });
   } catch (err) {
     console.error('Error saving settings:', err);
   }
@@ -77,9 +77,8 @@ async function saveState(force = false) {
     if (!force && now - lastStateSaveTime < 2000) return;
     lastStateSaveTime = now;
     
-    const supabase = getSupabase();
-    if (!supabase) return;
-    await supabase.from('bot_data').upsert({
+    if (!db) return;
+    await setDoc(doc(db, 'bot_data', 'state'), {
       id: 'state',
       data: {
         isRunning,
@@ -89,7 +88,7 @@ async function saveState(force = false) {
         lastLostSymbol: lastLostSymbol || null,
       },
       updated_at: new Date().toISOString()
-    });
+    }, { merge: true });
   } catch (err) {
     console.error('Error saving state:', err);
   }
@@ -107,9 +106,8 @@ function postMessage(event: any) {
 
 async function saveTrade(tradeEvent: any) {
   try {
-    const supabase = getSupabase();
-    if (!supabase) return;
-    const { error } = await supabase.from('bot_trades').insert({
+    if (!db) return;
+    await setDoc(doc(db, 'bot_trades', String(tradeEvent.id)), {
       id: tradeEvent.id,
       market: tradeEvent.market || 'UNKNOWN',
       buy_price: tradeEvent.buyPrice || 0,
@@ -121,10 +119,7 @@ async function saveTrade(tradeEvent: any) {
       entry_digit: tradeEvent.entryDigit,
       exit_digit: tradeEvent.exitDigit,
       created_at: new Date().toISOString()
-    });
-    if (error) {
-      console.error('Supabase error saving trade:', error);
-    }
+    }, { merge: true });
   } catch (err) {
     console.error('Error saving trade:', err);
   }
@@ -629,17 +624,16 @@ function handleContractUpdate(contract: any) {
 
 export async function initBot() {
   try {
-    const supabase = getSupabase();
-    if (!supabase) return;
+    if (!db) return;
     
-    const { data: settingsRow } = await supabase.from('bot_data').select('data').eq('id', 'settings').single();
-    if (settingsRow && settingsRow.data) {
-      currentSettings = settingsRow.data;
+    const settingsDoc = await getDoc(doc(db, 'bot_data', 'settings'));
+    if (settingsDoc.exists() && settingsDoc.data().data) {
+      currentSettings = settingsDoc.data().data;
     }
     
-    const { data: stateRow } = await supabase.from('bot_data').select('data').eq('id', 'state').single();
-    if (stateRow && stateRow.data) {
-      const stateData = stateRow.data;
+    const stateDoc = await getDoc(doc(db, 'bot_data', 'state'));
+    if (stateDoc.exists() && stateDoc.data().data) {
+      const stateData = stateDoc.data().data;
       isRunning = stateData?.isRunning || false;
       globalCurrentStake = stateData?.globalCurrentStake || 1;
       sessionPnL = stateData?.sessionPnL || 0;
@@ -675,15 +669,16 @@ export function startBotEngine(io: Server) {
     });
     
     // Fetch past trades
-    const supabase = getSupabase();
-    if (supabase) {
-      supabase.from('bot_trades').select('*').order('created_at', { ascending: false }).limit(50).then(({ data }) => {
+    if (db) {
+      const q = query(collection(db, 'bot_trades'), orderBy('created_at', 'desc'), limit(50));
+      getDocs(q).then((querySnapshot) => {
+        const data = querySnapshot.docs.map(d => d.data());
         if (data && data.length > 0) {
            const pastTrades = data.reverse().map(t => ({
              type: 'TRADE_RESULT',
              id: t.id,
              market: t.market,
-             buyPrice: t.buy_price,
+             buyPrice: t.buy_price || t.buyPrice,
              timestamp: t.timestamp,
              result: t.result,
              pnl: t.pnl,
@@ -694,7 +689,7 @@ export function startBotEngine(io: Server) {
            }));
            socket.emit('past_trades', pastTrades);
         }
-      }).then(undefined, err => console.error('Error fetching past trades:', err));
+      }).catch(err => console.error('Error fetching past trades:', err));
     }
 
     socket.on('worker_command', (data: any) => {
@@ -711,14 +706,16 @@ export function startBotEngine(io: Server) {
             isTradeActive,
             connectionStatus: isReady ? 'connected' : 'disconnected'
         });
-        if (supabase) {
-          supabase.from('bot_trades').select('*').order('created_at', { ascending: false }).limit(50).then(({ data: tradeData }) => {
+        if (db) {
+          const q = query(collection(db, 'bot_trades'), orderBy('created_at', 'desc'), limit(50));
+          getDocs(q).then((querySnapshot) => {
+            const tradeData = querySnapshot.docs.map(d => d.data());
             if (tradeData && tradeData.length > 0) {
                const pastTrades = tradeData.reverse().map(t => ({
                  type: 'TRADE_RESULT',
                  id: t.id,
                  market: t.market,
-                 buyPrice: t.buy_price,
+                 buyPrice: t.buy_price || t.buyPrice,
                  timestamp: t.timestamp,
                  result: t.result,
                  pnl: t.pnl,
@@ -729,23 +726,35 @@ export function startBotEngine(io: Server) {
                }));
                socket.emit('past_trades', pastTrades);
             }
-          }).then(undefined, err => console.error('Error fetching past trades sync:', err));
+          }).catch(err => console.error('Error fetching past trades sync:', err));
 
-          supabase.from('bot_trades').select('result, pnl').then(({ data: allTrades }) => {
+          const allQ = query(collection(db, 'bot_trades'), orderBy('timestamp', 'asc'));
+          getDocs(allQ).then((querySnapshot) => {
+            const allTrades = querySnapshot.docs.map(d => d.data());
             if (allTrades) {
               let totalPnL = 0;
               let wins = 0;
               let losses = 0;
               let totalTrades = 0;
+              let maxConsecutiveLosses = 0;
+              let currentConsecutiveLosses = 0;
               for (const t of allTrades) {
                  totalTrades++;
                  totalPnL += (t.pnl || 0);
-                 if (t.result === 'win') wins++;
-                 else if (t.result === 'loss') losses++;
+                 if (t.result === 'win' || t.result === 'won') {
+                   wins++;
+                   currentConsecutiveLosses = 0;
+                 } else if (t.result === 'loss' || t.result === 'lost') {
+                   losses++;
+                   currentConsecutiveLosses++;
+                   if (currentConsecutiveLosses > maxConsecutiveLosses) {
+                     maxConsecutiveLosses = currentConsecutiveLosses;
+                   }
+                 }
               }
-              socket.emit('all_time_stats', { totalPnL, wins, losses, totalTrades });
+              socket.emit('all_time_stats', { totalPnL, wins, losses, totalTrades, maxConsecutiveLosses, currentConsecutiveLosses });
             }
-          }).then(undefined, (err: any) => console.error('Error fetching all time stats:', err));
+          }).catch((err: any) => console.error('Error fetching all time stats:', err));
         }
       }
 
